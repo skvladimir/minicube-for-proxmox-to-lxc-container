@@ -4,11 +4,13 @@
 # Прерывание при любой ошибке
 set -e
 
-# Проверка установки dialog
+# Проверка установки dialog с выводом ошибок
 if ! command -v dialog &> /dev/null; then
-    echo "Установка пакета dialog..."
-    apt-get update
-    apt-get install -y dialog
+    echo "Ошибка: Пакет dialog не установлен. Установка..."
+    if ! apt-get update || ! apt-get install -y dialog; then
+        echo "Ошибка: Не удалось установить dialog. Убедитесь, что у вас есть доступ к интернету и права root."
+        exit 1
+    fi
 fi
 
 # Настройки по умолчанию
@@ -42,7 +44,7 @@ show_menu() {
 
     clear
     echo "$choice"
-    return $choice
+    return $?
 }
 
 # Функция создания контейнера
@@ -55,7 +57,7 @@ create_container() {
 
     # Создание LXC-контейнера
     echo "Создание LXC-контейнера $CT_ID..."
-    pct create $CT_ID $CT_TEMPLATE \
+    if ! pct create $CT_ID $CT_TEMPLATE \
         -arch amd64 \
         -hostname $CT_HOSTNAME \
         -password $CT_PASSWORD \
@@ -65,7 +67,10 @@ create_container() {
         -cores $CT_CORES \
         -net0 name=eth0,bridge=vmbr0,ip=$CT_IP${CT_GATEWAY:+,gw=$CT_GATEWAY} \
         -features nesting=1 \
-        -unprivileged 0
+        -unprivileged 0; then
+        echo "Ошибка: Не удалось создать контейнер."
+        exit 1
+    fi
 
     # Настройка контейнера для вложенной виртуализации
     echo "Настройка контейнера для вложенной виртуализации..."
@@ -83,7 +88,7 @@ create_container() {
 
     # Установка зависимостей и Minikube
     echo "Установка зависимостей и Minikube в контейнере..."
-    pct exec $CT_ID -- bash -c "
+    if ! pct exec $CT_ID -- bash -c "
         set -e
         # Обновление списков пакетов
         apt-get update
@@ -113,7 +118,10 @@ create_container() {
         su - minikube-user -c 'minikube status'
         # Включение панели управления Minikube
         su - minikube-user -c 'minikube dashboard --url &'
-    "
+    "; then
+        echo "Ошибка: Не удалось выполнить установку внутри контейнера."
+        exit 1
+    fi
 
     # Добавление SSH-ключа, если он указан
     if [ -n "$SSH_KEY" ]; then
